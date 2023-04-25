@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch
 
 from net import Net
-from data import T2LData
+from data import T2LData, load_intent_data
 from finetuning import T2LFineTuner
 
 class T2LModel(nn.Module):
@@ -30,9 +30,14 @@ class T2LModel(nn.Module):
         
         return self.output_layer(x)
     
-    def new_m(self, m):
-        self.output_layer = nn.Linear(self.hidden_shape[-1], m)
-
+    def new_m(self, m, keep_weights=True):
+        if keep_weights:
+            w, b = self.output_layer.weight, self.output_layer.bias
+            self.output_layer = nn.Linear(self.hidden_shape[-1], m)
+            self.output_layer.weight.data[:w.size(0), :w.size(1)] = w.data
+            self.output_layer.bias.data[:b.size(0)] = b.data
+        else:
+            self.output_layer = nn.Linear(self.hidden_shape[-1], m)
 
 class NetT2L(Net):
     """ Text 2 Label """
@@ -42,50 +47,42 @@ class NetT2L(Net):
         
         self.text2vec = SentenceTransformer('fav-kky/FERNET-C5')
         
-        self.data_train = T2LData(net=self, group='train', samples=['Ahoj.', 'Najdi mi tohle.'], labels=['hi', 'search'])
-        self.data_dev = T2LData(net=self, group='dev', samples=['Ahoj.', 'Najdi mi tohle.'], labels=['hi', 'search'])
+        self.data = T2LData(net=self, data=load_intent_data(from_zero=True))
         self.trainer = T2LFineTuner(net=self)
 
         # Model
         self.hidden = hidden
-        self.model = T2LModel(self.data_train.n, self.hidden, self.data_train.m)
+        self.model = T2LModel(self.data.n, self.hidden, self.data.m)
         self.trainer.reinit_optimizer()
 
     def encode(self, x):
         return self.text2vec.encode(x)
     
     def decode(self, v):
-        return self.data_train.target2label[torch.argmax(v).item()]
+        return self.data.target2label[torch.argmax(v).item()]
     
-    def reinit_model(self, keep_weights=True, print_summary=True):
-        self.model.new_m(self.data_train.m)
+    def reinit_model(self, keep_weights=True):
+        self.model.new_m(self.data.m, keep_weights=keep_weights)
         self.trainer.reinit_optimizer()
 
     def predict(self, x, is_encoded=False):
         self.model.eval()
         return self.decode(self.model(x if is_encoded else torch.from_numpy(self.encode(x))))
     
-    def learn(self, samples, labels, reset=False, verbose=False):
-        # TODO if label not in labels...
-
-        if reset:
-            self.data_train.set_pairs(samples, labels)
-            self.data_dev.set_pairs(samples, labels)
-        else:
-            self.data_train.set_pairs(self.data_train.samples+self.data_dev.samples+samples, self.data_train.labels+self.data_dev.labels+labels)
-            self.data_dev.set_pairs(samples, labels)
-
-        self.trainer.fit(trainloader=self.data_train.loader(), devloader=self.data_dev.loader(), verbose=verbose)
+    def learn(self, sample, label, verbose=False):
+        self.data.add(sample, label)
+        self.trainer.fit(trainloader=self.data.loader(group='train'), devloader=self.data.loader(group='dev'), verbose=verbose)
+        self.evaluate()
 
     def evaluate(self):
         self.model.eval()
         loss_list = []
         n_correct = 0
         n_fail = 0
-        for x, y_true, _, _ in self.data_dev.loader():
+        for x, y_true, _, _ in self.data.loader(group='knowledge'):
             
             y_pred = self.model(x)
-            loss_list.append(self.criterion(y_pred, y_true).data)
+            loss_list.append(self.trainer.criterion(y_pred, y_true).data)
             
             if torch.argmax(y_pred).item() == y_true[0].item():
                 n_correct += 1

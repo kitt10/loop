@@ -3,13 +3,28 @@ import torch.nn.functional as F
 import numpy as np
 import torch
 
+def load_intent_data(from_zero=True):
+    data = {
+        'train': {'samples': [], 'labels': []},
+        'knowledge': {'samples': [], 'labels': []},
+    }
+
+    with open('data.tsv', 'r') as fr:
+        for line in fr.readlines():
+            intent, prompt = line.strip().split('\t')
+            data['knowledge']['samples'].append(prompt)
+            data['knowledge']['labels'].append(intent)
+
+    return data
+
+
 class T2LDataset(Dataset):
 
     def __init__(self, x, y, samples, labels):
         self.x = x
         self.y = y
         self.samples = samples
-        self.labels = labels       
+        self.labels = labels
 
     def __getitem__(self, index):
         return self.x[index], self.y[index], self.samples[index], self.labels[index]
@@ -20,54 +35,87 @@ class T2LDataset(Dataset):
 
 class T2LData:
 
-    def __init__(self, net, group, samples, labels, batch_size=16, shuffle=True):
-        """
-            samples: list: ['sentence 1', 'sentence 2', ... 'sentence n']
-            labels: list: ['label 1', 'label 2', ... 'label n']
-            encoder: def for encoding input (in: <string> sentence, out: <np.ndarray> vec)
-            decoder: def for decoding output (in: <np.ndarray> vec, <string[]> labels, out: <string> label)
-        """
-
+    def __init__(self, net, data):
         self.net = net
-        self.group = group
-        self.samples = samples
-        self.labels = labels
-        self.batch_size = batch_size
-        self.shuffle = shuffle
+        self.data = data
 
-        self.set_pairs(self.samples, self.labels)
+        self.labels = None
+        self.target2label = None
+        self.pt = None
+        self.pk = None
+        self.n = None
+        self.m = None
+        self.x = {'train': None, 'dev': None, 'knowledge': None}
+        self.y = {'train': None, 'dev': None, 'knowledge': None}
+        self.init_data()
 
-    def set_pairs(self, samples, labels, extend=False):
-        if extend:
-            self.samples.extend(samples)
-            self.labels.extend(labels)
-        else:
-            self.samples = samples
-            self.labels = labels
+    def init_data(self):
+        self.labels = sorted(list(set(self.data['knowledge']['labels'])))
+        self.target2label = {target:label for target, label in enumerate(self.labels)}
 
-        self.samples_encoded = np.array([self.net.encode(sample) for sample in self.samples])
-        self.sorted_labels = sorted(list(set(self.labels)))
-        self.target2label = {target:label for target, label in enumerate(self.sorted_labels)}
-        self.label2target = [self.sorted_labels.index(label) for label in self.labels]
-
-        self.x = torch.from_numpy(self.samples_encoded.reshape(-1, self.samples_encoded.shape[1]).astype('float32'))
-        self.y = torch.tensor(self.label2target)
-        self.y_one_hot = F.one_hot(self.y)
+        self.data['train']['targets'] = [self.labels.index(label) for label in self.data['train']['labels']]
+        self.data['knowledge']['targets'] = [self.labels.index(label) for label in self.data['knowledge']['labels']]
         
-        self.p = self.x.shape[0]
-        self.n = len(self.x[0])
-        self.m = len(self.sorted_labels)
+        self.data['train']['encodings'] = self.encode_samples(self.data['train']['samples'])
+        self.data['knowledge']['encodings'] = self.encode_samples(self.data['knowledge']['samples'])
 
-        print(f'Data {self.group}: n = {self.n}, m = {self.m}, p = {self.p}')
-        print(f'Labels: {self.target2label}')
+        self.data['dev'] = {
+            'samples': self.data['knowledge']['samples'][:],
+            'encodings': self.data['knowledge']['encodings'].copy(),
+            'labels': self.data['knowledge']['labels'][:],
+            'targets': self.data['knowledge']['targets'][:]
+        }
+
+        self.pt = len(self.data['train']['samples'])
+        self.pk = len(self.data['knowledge']['samples'])
+
+        self.make_pairs(('knowledge', 'dev', 'train'))
+
+        self.n = len(self.x['knowledge'][0])
+        self.m = len(self.labels)
+
+        print(f'Required knowledge initialized: n = {self.n}, m = {self.m}, pt = {self.pt}, pk = {self.pk}, labels: {self.target2label}')
+
+    def encode_samples(self, s_):
+        return np.array([self.net.encode(s) for s in s_], ndmin=2)
     
-    def loader(self):
+    def make_pairs(self, groups):
+        for group in groups:
+            if len(self.data[group]['samples']) > 0:
+                self.x[group] = torch.from_numpy(self.data[group]['encodings'].reshape(-1, self.data[group]['encodings'].shape[1]).astype('float32'))
+                self.y[group] = torch.tensor(self.data[group]['targets'])
+            else:
+                self.x[group] = torch.tensor([])
+                self.y[group] = torch.tensor([])
+
+    def add(self, sample, label):
+        if label not in self.labels:
+            self.labels.append(label)
+            self.target2label[self.labels.index(label)] = label
+            self.m = len(self.labels)
+            self.net.reinit_model(keep_weights=True)
+
+        self.add_to_group('train', sample, label)
+        self.add_to_group('dev', sample, label)
+        self.pt = len(self.data['train']['samples'])
+
+        self.make_pairs(('dev', 'train'))
+
+    def add_to_group(self, group, sample, label):
+        if len(self.data[group]['samples']) > 0:
+            self.data[group]['encodings'] = np.concatenate((self.data[group]['encodings'], self.encode_samples([sample])), axis=0)
+        else:
+            self.data[group]['encodings'] = self.encode_samples([sample])
+
+        self.data[group]['samples'].append(sample)
+        self.data[group]['labels'].append(label)
+        self.data[group]['targets'].append(self.labels.index(label))
+    
+    def loader(self, group):
         return DataLoader(dataset=T2LDataset(
-            x=self.x,
-            y=self.y,
-            samples=self.samples,
-            labels=self.labels
-        ), batch_size=self.batch_size, shuffle=self.shuffle)
+            x=self.x[group],
+            y=self.y[group],
+            samples=self.data[group]['samples'],
+            labels=self.data[group]['labels']
+        ), batch_size=16, shuffle=True)
     
-    def label(self, one_hot):
-        return self.net.decode(one_hot)

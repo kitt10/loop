@@ -9,11 +9,11 @@ if __name__ == '__main__':
         prompt = input('\n\n> ')
         ans = net.predict(prompt)
         print(f'>> {ans}')
-        correction = input(f'>> Correct class (one of: {net.data_train.sorted_labels}): ')
+        correction = input(f'>> Correct class (one of: {net.data.labels}): ')
 
         if correction:
-            if correction in net.data_train.sorted_labels:
-                net.learn(samples=[prompt], labels=[correction], verbose=False)
+            if correction in net.data.labels:
+                net.learn(sample=prompt, label=correction, verbose=False)
 
                 print(f'(after training) >> {prompt} => {net.predict(prompt)}')
             else:

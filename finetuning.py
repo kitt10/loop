@@ -120,9 +120,8 @@ class T2LFineTuner:
         self.net = net
 
         self.hparams = dict(
-            learning_rate=3e-4,
-            adam_epsilon=1e-8,
-            patience=30
+            learning_rate=0.003,
+            patience=15
         )
 
         # Loss function
@@ -131,7 +130,7 @@ class T2LFineTuner:
         self.optimizer = None
 
     def reinit_optimizer(self):
-        self.optimizer = AdamW(self.net.model.parameters(), lr=self.hparams['learning_rate'], eps=self.hparams['adam_epsilon'])
+        self.optimizer = AdamW(self.net.model.parameters(), lr=self.hparams['learning_rate'])
 
     def fit(self, trainloader, devloader=None, epochs=500, verbose=True):
         train_loss_list = []
@@ -184,11 +183,12 @@ class T2LFineTuner:
             train_loss_list.append(mean_train_loss)
             dev_loss_list.append(mean_dev_loss)
             
-            if verbose > 0 and epoch % 10 == 0:
+            if verbose and epoch % 10 == 0:
                 print(f'epoch {epoch}, train loss {mean_train_loss}, dev loss {mean_dev_loss}')
 
             if len(dev_loss_list) > self.hparams['patience'] and all([dl < mean_dev_loss for dl in dev_loss_list[-self.hparams['patience']:-1]]):
-                print(f'Early stopping, dev_loss tail: {dev_loss_list[-self.hparams["patience"]:-1]}')
+                if verbose:
+                    print(f'Early stopping, dev_loss tail: {dev_loss_list[-self.hparams["patience"]:-1]}')
                 break
 
         print(f'Final train loss: {train_loss_list[-1].item()}, dev loss: {dev_loss_list[-1].item()}')
