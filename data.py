@@ -95,9 +95,14 @@ class T2LData:
             self.m = len(self.labels)
             self.net.reinit_model(keep_weights=True)
 
-        self.add_to_group('train', sample, label)
-        self.add_to_group('dev', sample, label)
-        self.pt = len(self.data['train']['samples'])
+        if sample not in self.data['train']['samples']:
+            self.add_to_group('train', sample, label)
+            self.pt = len(self.data['train']['samples'])
+            print(f'Sample {sample} added to train. pt = {self.pt}')
+        
+        if sample not in self.data['dev']['samples']:
+            self.add_to_group('dev', sample, label)
+            print(f'Sample {sample} added to dev.')
 
         self.make_pairs(('dev', 'train'))
 
@@ -111,11 +116,11 @@ class T2LData:
         self.data[group]['labels'].append(label)
         self.data[group]['targets'].append(self.labels.index(label))
     
-    def loader(self, group):
+    def loader(self, group, batch_size=16):
         return DataLoader(dataset=T2LDataset(
             x=self.x[group],
             y=self.y[group],
             samples=self.data[group]['samples'],
             labels=self.data[group]['labels']
-        ), batch_size=16, shuffle=True)
+        ), batch_size=batch_size, shuffle=True)
     

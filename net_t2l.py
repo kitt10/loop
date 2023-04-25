@@ -79,7 +79,7 @@ class NetT2L(Net):
         loss_list = []
         n_correct = 0
         n_fail = 0
-        for x, y_true, _, _ in self.data.loader(group='knowledge'):
+        for x, y_true, _, _ in self.data.loader(group='knowledge', batch_size=1):
             
             y_pred = self.model(x)
             loss_list.append(self.trainer.criterion(y_pred, y_true).data)
