@@ -16,9 +16,14 @@ class T2LModel(nn.Module):
         self.out_shape = out_shape
 
         self.transfer = torch.sigmoid if transfer == 'sigmoid' else torch.tanh
-        self.input_layer = nn.Linear(self.inp_shape, self.hidden_shape[0])
-        self.hidden_layers = nn.ModuleList([nn.Linear(self.hidden_shape[hi-1], self.hidden_shape[hi]) for hi in range(1, len(self.hidden_shape))])
-        self.output_layer = nn.Linear(self.hidden_shape[-1], self.out_shape)
+        if hidden_shape:
+            self.input_layer = nn.Linear(self.inp_shape, self.hidden_shape[0])
+            self.hidden_layers = nn.ModuleList([nn.Linear(self.hidden_shape[hi-1], self.hidden_shape[hi]) for hi in range(1, len(self.hidden_shape))])
+            self.output_layer = nn.Linear(self.hidden_shape[-1], self.out_shape)
+        else:
+            self.input_layer = nn.Identity()
+            self.hidden_layers = []
+            self.output_layer = nn.Linear(self.inp_shape, self.out_shape)
 
         self.train()
 
@@ -42,23 +47,38 @@ class T2LModel(nn.Module):
 class NetT2L(Net):
     """ Text 2 Label """
 
-    def __init__(self, hidden=[50, 75]):
+    def __init__(self, hidden=[50], middleblock=None, pretrained=None):
         Net.__init__(self)
         
         self.text2vec = SentenceTransformer('fav-kky/FERNET-C5')
+
+        self.middleblock = middleblock
+        self.pretrained = pretrained
         
-        self.data = T2LData(net=self, data=load_intent_data(from_zero=True))
+        self.data = T2LData(net=self, data=load_intent_data(from_zero=bool(pretrained==None)))
         self.trainer = T2LFineTuner(net=self)
 
         # Model
-        self.hidden = hidden
-        self.model = T2LModel(self.data.n, self.hidden, self.data.m)
+        if self.pretrained:
+            self.model = self.pretrained
+            if self.data.m > self.model.out_shape:
+                self.model.new_m(self.data.m, keep_weights=True)
+        else:
+            self.hidden = hidden
+            self.model = T2LModel(self.data.n, self.hidden, self.data.m)
+        
         self.trainer.reinit_optimizer()
 
     def encode(self, x):
-        return self.text2vec.encode(x)
+        if self.middleblock:
+            vec = self.text2vec.encode(x)
+            vec = torch.from_numpy(np.array(vec).astype('float32'))
+            return self.middleblock(vec).detach().numpy()
+        else:
+            return self.text2vec.encode(x)
     
     def decode(self, v):
+        print(f'target: {torch.argmax(v).item()}')
         return self.data.target2label[torch.argmax(v).item()]
     
     def reinit_model(self, keep_weights=True):

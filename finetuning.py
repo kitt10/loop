@@ -132,7 +132,7 @@ class T2LFineTuner:
     def reinit_optimizer(self):
         self.optimizer = AdamW(self.net.model.parameters(), lr=self.hparams['learning_rate'])
 
-    def fit(self, trainloader, devloader=None, epochs=500, verbose=True):
+    def fit(self, trainloader, devloader=None, epochs=1000, verbose=True):
         train_loss_list = []
         dev_loss_list = []
         print(f'Finetuning {epochs} epochs...', end='\r')

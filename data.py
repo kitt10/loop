@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 import torch
 
-def load_intent_data(from_zero=True):
+def load_intent_data(from_zero=True, train_labels=['STOP', 'POZDRAV', 'VYGOOGLI', 'KALENDÁŘ']):
     data = {
         'train': {'samples': [], 'labels': []},
         'knowledge': {'samples': [], 'labels': []},
@@ -14,6 +14,10 @@ def load_intent_data(from_zero=True):
             intent, prompt = line.strip().split('\t')
             data['knowledge']['samples'].append(prompt)
             data['knowledge']['labels'].append(intent)
+
+            if not from_zero and intent in train_labels:
+                data['train']['samples'].append(prompt)
+                data['train']['labels'].append(intent)
 
     return data
 
@@ -90,9 +94,9 @@ class T2LData:
 
     def add(self, sample, label):
         if label not in self.labels:
-            self.labels.append(label)
-            self.target2label[self.labels.index(label)] = label
-            self.m = len(self.labels)
+            self.data['knowledge']['samples'].append(sample)
+            self.data['knowledge']['labels'].append(label)
+            self.init_data()
             self.net.reinit_model(keep_weights=True)
 
         if sample not in self.data['train']['samples']:
