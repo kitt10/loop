@@ -72,25 +72,39 @@ class NetT2L(Net):
     def learn(self, sample, label, verbose=False):
         self.data.add(sample, label)
         self.trainer.fit(trainloader=self.data.loader(group='train'), devloader=self.data.loader(group='dev'), verbose=verbose)
-        self.evaluate()
 
-    def evaluate(self):
+    def evaluate(self, ret_wrongs=False, ret_oks=False, verbose=False):
         self.model.eval()
         loss_list = []
+        oks = []
+        wrongs = []
         n_correct = 0
         n_fail = 0
-        for x, y_true, _, _ in self.data.loader(group='knowledge', batch_size=1):
+        for x, y_true, sample, label in self.data.loader(group='knowledge', batch_size=1):
             
             y_pred = self.model(x)
             loss_list.append(self.trainer.criterion(y_pred, y_true).data)
             
-            if torch.argmax(y_pred).item() == y_true[0].item():
+            target_pred = torch.argmax(y_pred).item()
+            if target_pred == y_true[0].item():
                 n_correct += 1
+                oks.append((sample[0], label[0]))
             else:
                 n_fail += 1
+                wrongs.append((sample[0], label[0], self.data.target2label[target_pred]))
         
         acc = n_correct / (n_correct + n_fail)
         loss = np.mean([l.item() for l in loss_list])
-        print(f'Loss: {loss}, Acc: {acc}')
         
-        return loss, acc
+        if verbose:
+            print(f'Loss: {loss}, Acc: {acc}')
+        
+        ret = [loss, acc]
+        
+        if ret_wrongs:
+            ret.append(wrongs)
+        
+        if ret_oks:
+            ret.append(oks)
+        
+        return ret
