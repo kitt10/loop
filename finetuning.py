@@ -194,3 +194,86 @@ class T2LFineTuner:
         print(f'Final train loss: {train_loss_list[-1].item()}, dev loss: {dev_loss_list[-1].item()}')
 
         return train_loss_list, dev_loss_list
+    
+
+class I2LFineTuner:
+    
+    def __init__(self, net):
+
+        self.net = net
+
+        self.hparams = dict(
+            learning_rate=0.001,
+            patience=15
+        )
+
+        # Loss function
+        self.criterion = nn.CrossEntropyLoss()
+
+        self.optimizer = None
+
+    def reinit_optimizer(self):
+        self.optimizer = AdamW(self.net.model.parameters(), lr=self.hparams['learning_rate'])
+
+    def fit(self, trainloader, devloader=None, epochs=100, verbose=True):
+        train_loss_list = []
+        dev_loss_list = []
+        print(f'Finetuning {epochs} epochs...', end='\r')
+        for epoch in range(1, epochs+1):
+
+            if epoch % 50 == 0:
+                for g in self.optimizer.param_groups:
+                    g['lr'] *= 0.9
+                    
+                    if verbose:
+                        print(f'Epoch {epoch}: Learning rate changed to {g["lr"]}')
+            
+            # Set model to train configuration
+            self.net.model.train()
+            epoch_train_loss_list = []
+            for x, y_true, _, _ in trainloader:
+                # Clear gradient
+                self.optimizer.zero_grad()
+
+                # Make a prediction
+                y_pred = self.net.model(x)
+
+                # Calculate loss
+                loss = self.criterion(y_pred, y_true)
+
+                # Calculate gradients of parameters
+                loss.backward()
+
+                # Update parameters
+                self.optimizer.step()
+
+                epoch_train_loss_list.append(loss.data)
+
+            # Set model to eval configuration
+            self.net.model.eval()
+            epoch_dev_loss_list = []
+            for x, y_true, _, _ in devloader:
+                y_pred = self.net.model(x)
+
+                # Calculate loss
+                loss = self.criterion(y_pred, y_true)
+
+                epoch_dev_loss_list.append(loss.data)
+            
+            mean_train_loss = np.mean([l.item() for l in epoch_train_loss_list])
+            mean_dev_loss = np.mean([l.item() for l in epoch_dev_loss_list])
+            
+            train_loss_list.append(mean_train_loss)
+            dev_loss_list.append(mean_dev_loss)
+            
+            if verbose and epoch % 10 == 0:
+                print(f'epoch {epoch}, train loss {mean_train_loss}, dev loss {mean_dev_loss}')
+
+            if len(dev_loss_list) > self.hparams['patience'] and all([dl < mean_dev_loss for dl in dev_loss_list[-self.hparams['patience']:-1]]):
+                if verbose:
+                    print(f'Early stopping, dev_loss tail: {dev_loss_list[-self.hparams["patience"]:-1]}')
+                break
+
+        print(f'Final train loss: {train_loss_list[-1].item()}, dev loss: {dev_loss_list[-1].item()}')
+
+        return train_loss_list, dev_loss_list
