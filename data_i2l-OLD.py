@@ -1,20 +1,18 @@
-from transformers import AutoImageProcessor, AutoFeatureExtractor, YolosFeatureExtractor, YolosModel
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms, datasets
 from PIL import Image
 from glob import glob
 from os.path import join
-import torch.nn.functional as F
 import numpy as np
 import torch
-from img2vec_pytorch import Img2Vec
-
-img2vec = Img2Vec(cuda=False)
-IMAGE_PROCESSOR = AutoImageProcessor.from_pretrained('hustvl/yolos-small')
-YOLOS_MODEL = YolosModel.from_pretrained('hustvl/yolos-small')
-YOLOS_FE = YolosFeatureExtractor.from_pretrained('hustvl/yolos-small')
 
 IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
+
+TRANSFORM = transforms.Compose([
+        transforms.Resize((320, 320)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # Normalize for the ImageNet format.
+    ])
 
 def pil_loader(path):
     with open(path, 'rb') as f:
@@ -22,18 +20,7 @@ def pil_loader(path):
         return img.convert('RGB')
 
 def path2vec(path):
-    vec = img2vec.get_vec(pil_loader(path), tensor=True)
-    
-    return vec.flatten().numpy()
-
-    inputs = IMAGE_PROCESSOR(pil_loader(path), return_tensors='pt')
-    
-    print(inputs['pixel_values'].size())
-
-    with torch.no_grad():
-        outputs = YOLOS_MODEL(**inputs)
-    
-    return outputs.last_hidden_state[0, :, -1].numpy()
+    return TRANSFORM(pil_loader(path))
 
 def load_image_data(dataset_path, from_zero=True, train_labels=['mug', 'ball']):
     data = {
@@ -52,7 +39,6 @@ def load_image_data(dataset_path, from_zero=True, train_labels=['mug', 'ball']):
                 data['train']['labels'].append(label)
 
     return data
-
 
 class I2LDataset(Dataset):
 
@@ -107,18 +93,18 @@ class I2LData:
 
         self.make_pairs(('knowledge', 'dev', 'train'))
 
-        self.n = len(self.x['knowledge'][0])
+        self.n = list(self.x['knowledge'].size()[2:])
         self.m = len(self.labels)
 
         print(f'Required knowledge initialized: n = {self.n}, m = {self.m}, pt = {self.pt}, pk = {self.pk}, labels: {self.target2label}')
 
     def encode_samples(self, s_):
-        return np.array([self.net.encode(s) for s in s_], ndmin=2)
+        return [self.net.encode(s) for s in s_]
     
     def make_pairs(self, groups):
         for group in groups:
             if len(self.data[group]['samples']) > 0:
-                self.x[group] = torch.from_numpy(self.data[group]['encodings'].reshape(-1, self.data[group]['encodings'].shape[1]).astype('float32'))
+                self.x[group] = torch.stack(self.data[group]['encodings'])
                 self.y[group] = torch.tensor(self.data[group]['targets'])
             else:
                 self.x[group] = torch.tensor([])
@@ -144,7 +130,7 @@ class I2LData:
 
     def add_to_group(self, group, sample, label):
         if len(self.data[group]['samples']) > 0:
-            self.data[group]['encodings'] = np.concatenate((self.data[group]['encodings'], self.encode_samples([sample])), axis=0)
+            self.data[group]['encodings'].extend(self.encode_samples([sample]))
         else:
             self.data[group]['encodings'] = self.encode_samples([sample])
 
