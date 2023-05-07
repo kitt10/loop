@@ -28,7 +28,7 @@ class NetI2L(Net):
             self.model = models.mobilenet_v3_large(pretrained=False, progress=True)
             self.model.classifier[-1] = nn.Linear(self.model.classifier[-1].in_features, self.data.m)
         
-        self.trainer.reinit_optimizer()
+        self.trainer.reinit_optimizer(parameters=self.model.classifier[-1].parameters())
 
     def encode(self, x):
         return self.path2vec(x)
@@ -36,9 +36,18 @@ class NetI2L(Net):
     def decode(self, v):
         return self.data.target2label[torch.argmax(v).item()]
     
+    def new_m(self, m, keep_weights=True):
+        if keep_weights:
+            w, b = self.model.classifier[-1].weight, self.model.classifier[-1].bias
+            self.model.classifier[-1] = nn.Linear(self.model.classifier[-1].in_features, m)
+            self.model.classifier[-1].weight.data[:w.size(0), :w.size(1)] = w.data
+            self.model.classifier[-1].bias.data[:b.size(0)] = b.data
+        else:
+            self.model.classifier[-1] = nn.Linear(self.model.classifier[-1].in_features, m)
+    
     def reinit_model(self, keep_weights=True):
-        self.model.new_m(self.data.m, keep_weights=keep_weights)
-        self.trainer.reinit_optimizer()
+        self.new_m(self.data.m, keep_weights=keep_weights)
+        self.trainer.reinit_optimizer(parameters=self.model.classifier[-1].parameters())
 
     def predict(self, x, is_encoded=False):
         self.model.eval()
